@@ -1,0 +1,53 @@
+name: WordPress VPS Backup
+
+on:
+  workflow_dispatch:
+    inputs:
+      site:
+        description: 'Selecciona el sitio a respaldar'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - wp_acjsolution
+          - wp_ai_client1
+          - all
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar llave SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+
+      - name: Enviar script y ejecutar respaldo en VPS
+        env:
+          HOST: ${{ secrets.VPS_HOST }}
+          USER: ${{ secrets.VPS_USER }}
+          PORT: ${{ secrets.VPS_PORT || 22 }}
+          SITE: ${{ github.event.inputs.site }}
+        run: |
+          # 1. Enviar el script actualizado al VPS
+          scp -P $PORT -o StrictHostKeyChecking=no scripts/backup_wordpress.sh $USER@$HOST:/tmp/backup_wordpress.sh
+          
+          # 2. Ejecutar respaldo
+          ssh -p $PORT -o StrictHostKeyChecking=no $USER@$HOST "chmod +x /tmp/backup_wordpress.sh && /tmp/backup_wordpress.sh $SITE"
+
+          # 3. Descargar el archivo resultante hacia GitHub Actions
+          mkdir -p ./artifacts
+          scp -P $PORT -o StrictHostKeyChecking=no "$USER@$HOST:/tmp/backups/backup_*.tar.gz" ./artifacts/
+
+          # 4. Limpieza en el VPS (no dejar archivos ocupando disco)
+          ssh -p $PORT -o StrictHostKeyChecking=no $USER@$HOST "rm -rf /tmp/backups /tmp/backup_wordpress.sh"
+
+      - name: Subir Artifact a GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: wordpress-backup-${{ github.event.inputs.site }}-${{ github.run_id }}
+          path: ./artifacts/*.tar.gz
+          retention-days: 7
